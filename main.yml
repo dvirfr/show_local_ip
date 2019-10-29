@@ -1,0 +1,168 @@
+---
+- hosts: localhost
+  tasks:
+    - ec2_group:
+        name: small_web_app
+        description: small_web_app
+        region: eu-central-1
+        vpc_id: vpc-ea708d80
+        rules:
+          - proto: tcp
+            ports:
+            - 80
+            - 22
+            - 443
+            cidr_ip: 0.0.0.0/0
+            rule_desc: allow all on port 80, 22 amd 443
+          - proto: tcp
+            ports:
+              - 80
+              - 22
+            cidr_ip: 172.31.40.141/32
+            rule_desc: allow ansible host
+        rules_egress:
+          - proto: tcp
+            ports:
+            - 80
+            - 22
+            cidr_ip: 0.0.0.0/0
+            rule_desc: allow all on port 80
+      register: small_web_app
+
+    - ec2:
+        key_name: dvir
+        instance_type: t2.micro
+        image: ami-0cc0a36f626a4fdf5
+        region: eu-central-1
+        wait: yes
+        wait_timeout: 500
+        count: 1
+        instance_tags:
+           EnvName: Test Environment
+           InstanceGroup : webservers
+        monitoring: yes
+        group_id: "{{ small_web_app.group_id }}"
+      register: ec2
+
+    - name: Python sccript to add instances to host
+      become: yes
+      script: change_hosts.py
+      args:
+        executable: python3
+
+#    - name: Add new instance to host group
+#      add_host:
+#        hostname: "{{ item.public_dns_name }}"
+#        groups: webservers
+#        with_items: "{{ ec2.instances }}"
+#      loop: "{{ ec2.instances }}"
+
+#    - name: Add the newly created EC2 instance(s) to host group
+#      lineinfile:
+#        path: /home/ubuntu/new-test/show_ip/hosts
+#        regexp: "{{ item.public_dns_name }}"
+#        insertafter: [webservers]
+#        line: "{{ item.public_dns_name }}"
+#        state: present
+#      with_items: "{{ ec2.instances }}"
+#    - name: Python sccript to add instances to host
+#      become: yes
+#      script: change_hosts.py
+#      args:
+#        executable: python3
+
+    - name: Wait for SSH to come up
+      wait_for:
+        host: "{{ item.public_dns_name }}"
+        port: 22
+        state: started
+      with_items: "{{ ec2.instances }}"
+    
+    #- name: Configure instance
+    #  hosts: launched
+    #  remote_user: ubuntu
+    #  tasks:
+    #    - name: Ensure NTP is up and running
+    #      service: name=ntpd state=started
+    
+    ###
+
+# Install system apt packages
+- hosts: webservers
+  become: yes
+  tasks:
+  - name: install packages
+    apt:
+      name: "{{ packages }}"
+      state: present
+      update_cache: yes
+    vars:
+      packages:
+        - python3-pip
+        - nginx
+# Install the app, note: don't do these tasks with become sudo
+- hosts: webservers
+  become: yes
+  tasks:
+    - name: clone repo
+      action: git repo={{repo_url}} dest=/home/{{ ansible_ssh_user }}/{{ app_name }} remote={{repo_remote}} version={{repo_version}} accept_hostkey=True
+#    - name: clone repo
+#      git:
+#        repo: 'https://github.com/{{ github_user }}/{{ app_name }}.git'
+#        dest: /home/{{ ansible_ssh_user }}/{{ app_name }}
+#        update: yes  # Does a git pull if the repo already exists
+    - name: Install virtualenv via pip
+      pip:
+        name: virtualenv
+        executable: pip3
+
+    - name: install modules in a virtualenv
+      pip:
+        requirements: /home/{{ ansible_ssh_user }}/{{ app_name }}/requirements.txt
+        virtualenv: /home/{{ ansible_ssh_user }}/{{ app_name }}/env
+        virtualenv_python: python3.6
+
+# Configure app systemd service and nginx
+- hosts: webservers
+  become: yes
+  tasks:
+  - name: template systemd service config
+    copy:
+      src: .service
+      dest: /etc/systemd/system/{{ app_name }}.service
+  - name: start systemd app service
+    systemd: name={{ app_name }}.service state=restarted enabled=yes
+  - name: template nginx site config
+    template:
+      src: .nginx
+      dest: /etc/nginx/sites-available/{{ app_name }}
+  - name: remove default nginx site config
+    file: path=/etc/nginx/sites-enabled/default state=absent
+  #- command: mv /etc/nginx/sites-enabled/default /tmp/nginx.sites-enabled.default
+  - name: enable nginx site
+    file:
+      src: /etc/nginx/sites-available/{{ app_name }}
+      dest: /etc/nginx/sites-enabled/default
+      state: link
+      force: yes
+  - name: restart nginx
+    systemd: name=nginx state=restarted enabled=yes
+  - name: open firewall for nginx
+    ufw:
+      rule: allow
+      name: Nginx Full
+
+# Run a quick test to verify the site is working
+- hosts: webservers
+  become: yes
+  tasks:
+  - name: get url
+    get_url:
+      url: http://{{inventory_hostname}}
+      dest: /tmp/hello.html
+  - name: read html
+    shell: cat /tmp/hello.html
+    register: html_contents
+  - name: check for string in html
+    when: html_contents.stdout.find('hello') != -1
+    debug: msg="success!"

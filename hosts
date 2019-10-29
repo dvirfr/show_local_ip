@@ -1,0 +1,11 @@
+[webservers]
+
+
+[webservers:vars]
+# Local variables for Ansible playbooks
+ansible_ssh_user=ubuntu
+app_name=show_ip
+github_user=dvirfr
+repo_url=https://github.com/{{ github_user }}/{{ app_name }}.git
+repo_remote=origin
+repo_version=master

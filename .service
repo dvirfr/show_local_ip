@@ -1,0 +1,13 @@
+[Unit]
+Description=uWSGI instance to serve show_ip
+After=network.target
+
+[Service]
+User=root
+Group=www-data
+WorkingDirectory=/home/ubuntu/show_ip
+Environment="PATH=/home/ubuntu/show_ip/env/bin"
+ExecStart=/home/ubuntu/show_ip/env/bin/uwsgi --ini show_ip.ini
+
+[Install]
+WantedBy=multi-user.target
