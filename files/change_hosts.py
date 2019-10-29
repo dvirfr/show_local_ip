@@ -2,7 +2,7 @@ import boto3
 
 ec2_client = boto3.client('ec2', region_name='eu-central-1')
 
-hosts_file = '/home/ubuntu/new-test/show_ip/hosts'
+hosts_file = '../hosts'
 
 find_instances = ec2_client.describe_tags(
     Filters=[
